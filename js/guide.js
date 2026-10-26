@@ -3296,131 +3296,262 @@ update();
 })();
 
 
-/* v30.9.154 — chapter-scene-transition-v154.
-   Keep the existing document flow intact. Only an intentional downward page
-   scroll crossing a chapter header triggers a brief editorial transition.
-   Native page scrolling, in-chapter gestures and jump-navigation are preserved. */
-(() => {
-  'use strict';
-  const headings=[...document.querySelectorAll('#guide .chapter-eyebrow')];
-  if(headings.length!==5 || !('requestAnimationFrame' in window))return;
-  const reduced=window.matchMedia('(prefers-reduced-motion: reduce)');
-  const overlay=document.createElement('div');
-  overlay.className='chapter-scene-curtain';
-  overlay.setAttribute('aria-hidden','true');
-  overlay.innerHTML='<div class="chapter-scene-curtain__content">'
-    +'<span class="chapter-scene-curtain__rule"></span>'
-    +'<p class="chapter-scene-curtain__number"></p>'
-    +'<p class="chapter-scene-curtain__title"></p>'
-    +'<p class="chapter-scene-curtain__progress"></p></div>';
-  document.body.appendChild(overlay);
-  const number=overlay.querySelector('.chapter-scene-curtain__number');
-  const title=overlay.querySelector('.chapter-scene-curtain__title');
-  const progress=overlay.querySelector('.chapter-scene-curtain__progress');
-  let previousY=window.scrollY;
-  let previousTops=headings.map(node=>node.getBoundingClientRect().top);
-  let scrollFrame=0,active=false,manualScrollAt=0,suspendUntil=0;
-  let touchStart=null;
-  const now=()=>performance.now();
-  const skip=()=>reduced.matches || active || now()<suspendUntil
-    || document.body.classList.contains('food-drawer-open')
-    || document.body.classList.contains('food-swipe-active')
-    || document.body.classList.contains('food-swipe-dragging')
-    || document.activeElement?.matches('input,textarea,select,[contenteditable="true"]');
-  const recalibrate=()=>{
-    previousY=window.scrollY;
-    previousTops=headings.map(node=>node.getBoundingClientRect().top);
-  };
-  // Ignore direct navigation and the smooth scrolling it initiates.
-  document.addEventListener('click', event=>{
-    if(event.target.closest('a[href^="#"],.nav-button,.section-jump-button,.hero-title-link,[data-target]')){
-      suspendUntil=now()+1600;
+/* v30.9.156 — chapter-sheet-transition.
+   Each of the five guide chapters becomes a full-height “sheet”.
+   Long content scrolls inside the sheet; only a second pull at the top/bottom
+   moves to the neighbouring chapter. While the next sheet enters, it sits above
+   the previous one with a gentle scale / fade handoff. */
+;(() => {
+  "use strict";
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const guide = document.getElementById('guide');
+  const pageBody = guide?.querySelector(':scope > .page-body');
+  if (!guide || !pageBody) return;
+  if (pageBody.dataset.chapterSheetsReady === 'true') return;
+
+  function clamp(value, min = 0, max = 1) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function buildChapterSheets() {
+    const children = [...pageBody.children];
+    const groups = [];
+    let current = null;
+
+    for (const child of children) {
+      if (child.matches('p.chapter-eyebrow')) {
+        current = { anchor: null, elements: [] };
+        const previous = child.previousElementSibling;
+        if (previous?.matches('.jump-anchor')) {
+          current.anchor = previous;
+        }
+        groups.push(current);
+        current.elements.push(child);
+        continue;
+      }
+      if (child.matches('hr.chapter-divider')) continue;
+      if (current) current.elements.push(child);
     }
-  },true);
-  window.addEventListener('wheel',event=>{
-    if(event.deltaY>0 && Math.abs(event.deltaY)>Math.abs(event.deltaX))manualScrollAt=now();
-  },{passive:true});
-  window.addEventListener('touchstart',event=>{
-    if(event.touches.length===1)touchStart={x:event.touches[0].clientX,y:event.touches[0].clientY};
-    else touchStart=null;
-  },{passive:true});
-  window.addEventListener('touchmove',event=>{
-    if(!touchStart||event.touches.length!==1)return;
-    const dx=event.touches[0].clientX-touchStart.x;
-    const dy=event.touches[0].clientY-touchStart.y;
-    if(dy < -10 && Math.abs(dy)>Math.abs(dx)*1.25)manualScrollAt=now();
-  },{passive:true});
-  window.addEventListener('touchend',()=>{touchStart=null;},{passive:true});
-  window.addEventListener('touchcancel',()=>{touchStart=null;},{passive:true});
-  window.addEventListener('keydown',event=>{
-    if(['ArrowDown','PageDown',' ','End'].includes(event.key) &&
-      !event.target?.closest?.('input,textarea,select,[contenteditable="true"]'))manualScrollAt=now();
+    if (groups.length < 2) return [];
+
+    const fragment = document.createDocumentFragment();
+    groups.forEach((group, index) => {
+      const stage = document.createElement('section');
+      stage.className = 'chapter-stage';
+      stage.dataset.chapterIndex = String(index + 1).padStart(2, '0');
+      stage.style.setProperty('--chapter-layer', String(index + 1));
+
+      const sheet = document.createElement('div');
+      sheet.className = 'chapter-sheet';
+      const scroll = document.createElement('div');
+      scroll.className = 'chapter-scroll';
+      scroll.tabIndex = 0;
+      const content = document.createElement('div');
+      content.className = 'chapter-content';
+
+      if (group.anchor) content.appendChild(group.anchor);
+      group.elements.forEach(node => content.appendChild(node));
+
+      scroll.appendChild(content);
+      sheet.appendChild(scroll);
+      stage.appendChild(sheet);
+      fragment.appendChild(stage);
+    });
+
+    pageBody.textContent = '';
+    pageBody.appendChild(fragment);
+    pageBody.classList.add('chapter-stack-enhanced');
+    pageBody.dataset.chapterSheetsReady = 'true';
+    return [...pageBody.querySelectorAll(':scope > .chapter-stage')];
+  }
+
+  const stages = buildChapterSheets();
+  if (!stages.length) return;
+
+  const scrollBoxes = stages.map(stage => stage.querySelector('.chapter-scroll')).filter(Boolean);
+  const edgeState = new WeakMap();
+  const touchState = new WeakMap();
+  let ticking = 0;
+  let programmaticUntil = 0;
+
+  function stageAt(index) {
+    return stages[index] || null;
+  }
+
+  function scrollboxOf(stage) {
+    return stage?.querySelector('.chapter-scroll') || null;
+  }
+
+  function isAtTop(box) {
+    return box.scrollTop <= 2;
+  }
+
+  function isAtBottom(box) {
+    return box.scrollTop + box.clientHeight >= box.scrollHeight - 2;
+  }
+
+  function clearEdge(box) {
+    edgeState.delete(box);
+    const stage = box.closest('.chapter-stage');
+    stage?.classList.remove('is-edge-ready-top', 'is-edge-ready-bottom');
+  }
+
+  function setEdge(box, side) {
+    edgeState.set(box, { side, at: Date.now() });
+    const stage = box.closest('.chapter-stage');
+    stage?.classList.toggle('is-edge-ready-top', side === 'top');
+    stage?.classList.toggle('is-edge-ready-bottom', side === 'bottom');
+  }
+
+  function hasFreshEdge(box, side) {
+    const state = edgeState.get(box);
+    return Boolean(state && state.side === side && Date.now() - state.at < 1200);
+  }
+
+  function goStage(currentStage, direction) {
+    const index = stages.indexOf(currentStage);
+    if (index < 0) return false;
+    const target = direction === 'prev' ? stageAt(index - 1) : stageAt(index + 1);
+    if (!target) return false;
+    clearEdge(scrollboxOf(currentStage));
+    programmaticUntil = Date.now() + 900;
+    target.scrollIntoView({
+      block: 'start',
+      behavior: reduceMotion.matches ? 'auto' : 'smooth'
+    });
+    return true;
+  }
+
+  function updateScrollHints(box) {
+    const stage = box.closest('.chapter-stage');
+    if (!stage) return;
+    const scrollable = box.scrollHeight > box.clientHeight + 3;
+    const topHidden = box.scrollTop > 8;
+    const bottomHidden = box.scrollTop + box.clientHeight < box.scrollHeight - 8;
+    stage.classList.toggle('is-scrollable', scrollable);
+    stage.classList.toggle('show-top-fade', scrollable && topHidden);
+    stage.classList.toggle('show-bottom-fade', scrollable && bottomHidden);
+  }
+
+  function handleBoundaryIntent(box, direction, nativeEvent) {
+    if (Date.now() < programmaticUntil) return false;
+    const stage = box.closest('.chapter-stage');
+    if (!stage) return false;
+    const side = direction === 'prev' ? 'top' : 'bottom';
+    const edgeOk = direction === 'prev' ? isAtTop(box) : isAtBottom(box);
+    if (!edgeOk) {
+      clearEdge(box);
+      return false;
+    }
+    nativeEvent.preventDefault();
+    if (hasFreshEdge(box, side)) {
+      goStage(stage, direction);
+    } else {
+      setEdge(box, side);
+    }
+    return true;
+  }
+
+  function onWheel(event) {
+    const box = event.currentTarget;
+    if (Math.abs(event.deltaY) < 4) return;
+    const movingDown = event.deltaY > 0;
+    if (movingDown && isAtBottom(box)) {
+      handleBoundaryIntent(box, 'next', event);
+    } else if (!movingDown && isAtTop(box)) {
+      handleBoundaryIntent(box, 'prev', event);
+    } else {
+      clearEdge(box);
+    }
+  }
+
+  function onTouchStart(event) {
+    const box = event.currentTarget;
+    const touch = event.touches[0];
+    touchState.set(box, {
+      startY: touch.clientY,
+      lastY: touch.clientY,
+      triggered: false
+    });
+  }
+
+  function onTouchMove(event) {
+    const box = event.currentTarget;
+    const state = touchState.get(box);
+    if (!state) return;
+    const touch = event.touches[0];
+    const delta = touch.clientY - state.startY;
+    state.lastY = touch.clientY;
+    // Finger moves up => content wants to go down => next chapter.
+    if (delta < -16 && isAtBottom(box)) {
+      if (handleBoundaryIntent(box, 'next', event)) state.triggered = true;
+    } else if (delta > 16 && isAtTop(box)) {
+      if (handleBoundaryIntent(box, 'prev', event)) state.triggered = true;
+    } else if (Math.abs(delta) > 8) {
+      clearEdge(box);
+    }
+  }
+
+  function onTouchEnd(event) {
+    const box = event.currentTarget;
+    const state = touchState.get(box);
+    if (!state) return;
+    if (!state.triggered) {
+      const delta = state.lastY - state.startY;
+      if (delta < -18 && isAtBottom(box)) setEdge(box, 'bottom');
+      else if (delta > 18 && isAtTop(box)) setEdge(box, 'top');
+      else clearEdge(box);
+    }
+    touchState.delete(box);
+  }
+
+  function updateStages() {
+    ticking = 0;
+    const viewport = window.innerHeight || 1;
+    let activeIndex = 0;
+    let bestDistance = Infinity;
+
+    stages.forEach((stage, index) => {
+      const rect = stage.getBoundingClientRect();
+      const enter = clamp((viewport - rect.top) / (viewport * 0.92));
+      const exit = clamp(-rect.top / (viewport * 0.92));
+      const settle = clamp(1 - Math.max(0, rect.top) / (viewport * 0.46));
+      const distance = Math.abs(rect.top - 14);
+      if (distance < bestDistance && rect.bottom > 60) {
+        bestDistance = distance;
+        activeIndex = index;
+      }
+      stage.style.setProperty('--chapter-enter', enter.toFixed(4));
+      stage.style.setProperty('--chapter-exit', exit.toFixed(4));
+      stage.style.setProperty('--chapter-settle', settle.toFixed(4));
+    });
+
+    stages.forEach((stage, index) => {
+      stage.classList.toggle('is-active', index === activeIndex);
+    });
+  }
+
+  function requestStageUpdate() {
+    if (!ticking) ticking = requestAnimationFrame(updateStages);
+  }
+
+  scrollBoxes.forEach(box => {
+    box.addEventListener('wheel', onWheel, { passive: false });
+    box.addEventListener('touchstart', onTouchStart, { passive: true });
+    box.addEventListener('touchmove', onTouchMove, { passive: false });
+    box.addEventListener('touchend', onTouchEnd, { passive: true });
+    box.addEventListener('scroll', () => {
+      updateScrollHints(box);
+      if (!isAtTop(box) && !isAtBottom(box)) clearEdge(box);
+    }, { passive: true });
+    updateScrollHints(box);
   });
 
-  function changeChapter(index){
-    if(skip())return;
-    active=true;
-    const eyebrow=headings[index];
-    const heading=eyebrow.nextElementSibling;
-    // Only text sourced from the already existing chapter headings.
-    number.textContent=eyebrow.textContent.trim();
-    title.textContent=heading?.matches('h2') ? heading.textContent.trim() : 'グルメ';
-    progress.textContent=String(index+1).padStart(2,'0')+' / 05';
-    overlay.classList.remove('is-arriving');
-    overlay.classList.add('is-covering');
-    // Cover the previous chapter BEFORE positioning the new one.
-    window.setTimeout(()=>{
-      if(!eyebrow.isConnected){overlay.classList.remove('is-covering');active=false;return;}
-      // 'auto' bypasses the site's html{scroll-behavior:smooth} during the covered jump.
-      const html=document.documentElement;
-      const prior=html.style.scrollBehavior;
-      html.style.scrollBehavior='auto';
-      const target=Math.max(0,window.scrollY+eyebrow.getBoundingClientRect().top-24);
-      window.scrollTo({top:target,behavior:'instant'});
-      requestAnimationFrame(()=>requestAnimationFrame(()=>{
-        // Top-level accordions can automatically fold when they leave view.
-        // Compensate for any resulting layout shift before uncovering the scene.
-        const delta=eyebrow.getBoundingClientRect().top-24;
-        if(Math.abs(delta)>2){
-          window.scrollTo({top:Math.max(0,window.scrollY+delta),behavior:'instant'});
-        }
-        html.style.scrollBehavior=prior;
-        overlay.classList.remove('is-covering');
-        overlay.classList.add('is-arriving');
-        window.setTimeout(()=>{
-          overlay.classList.remove('is-arriving');
-          active=false;
-          // Do not re-trigger from the subsequent scroll/resize/accordion reflow.
-          suspendUntil=now()+150;
-          recalibrate();
-        },390);
-      }));
-    },200);
-  }
-
-  function scan(){
-    scrollFrame=0;
-    const y=window.scrollY;
-    const tops=headings.map(node=>node.getBoundingClientRect().top);
-    const moved=y-previousY;
-    const gate=window.innerHeight*.88;
-    const canTrigger=!skip() && now()-manualScrollAt<1050 && moved>1.5;
-    if(canTrigger){
-      // Header #1 has no preceding chapter. Switch only at the four boundaries.
-      for(let i=1;i<headings.length;i++){
-        if(previousTops[i]>gate && tops[i]<=gate && tops[i]>-window.innerHeight*.3){
-          previousY=y;previousTops=tops;
-          changeChapter(i);
-          return;
-        }
-      }
-    }
-    previousY=y;
-    previousTops=tops;
-  }
-  window.addEventListener('scroll',()=>{
-    if(!scrollFrame)scrollFrame=requestAnimationFrame(scan);
-  },{passive:true});
-  window.addEventListener('resize',recalibrate,{passive:true});
-  window.addEventListener('pageshow',recalibrate);
+  window.addEventListener('scroll', requestStageUpdate, { passive: true });
+  window.addEventListener('resize', () => {
+    scrollBoxes.forEach(updateScrollHints);
+    requestStageUpdate();
+  }, { passive: true });
+  window.addEventListener('pageshow', requestStageUpdate);
+  requestStageUpdate();
 })();

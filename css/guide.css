@@ -5123,3 +5123,144 @@ html[data-theme="light"] #guide .travel-passes .pass-recommend-badge {
   -webkit-mask-image:linear-gradient(to right,transparent 0%,#000 25px,#000 calc(100% - 16px),transparent 100%);
   mask-image:linear-gradient(to right,transparent 0%,#000 25px,#000 calc(100% - 16px),transparent 100%);
 }
+
+
+/* v30.9.156 — chapter sheet transitions.
+   Five main chapters behave like stacked editorial sheets.
+   The next chapter rises from below with mild radius / shadow / title emphasis,
+   while long content keeps its own inner scroll area. */
+#guide > .page-body.chapter-stack-enhanced{
+  position:relative;
+  margin-top:6px;
+}
+#guide > .page-body.chapter-stack-enhanced > .chapter-stage{
+  --chapter-enter:1;
+  --chapter-exit:0;
+  --chapter-settle:1;
+  position:relative;
+  z-index:var(--chapter-layer,1);
+  height:100svh;
+  min-height:680px;
+}
+#guide > .page-body.chapter-stack-enhanced > .chapter-stage + .chapter-stage{
+  margin-top:-14px;
+}
+#guide > .page-body.chapter-stack-enhanced .chapter-sheet{
+  position:sticky;
+  top:12px;
+  height:calc(100svh - 24px);
+  border:1px solid rgba(255,255,255,.14);
+  border-radius:24px;
+  overflow:hidden;
+  background:linear-gradient(180deg,#111214 0%,#0B0B0D 100%);
+  box-shadow:0 16px 46px rgba(0,0,0,.34),0 2px 16px rgba(0,0,0,.2);
+  transform-origin:50% 10%;
+  transform:translateY(calc((1 - var(--chapter-enter))*42px)) scale(calc(1.022 - (var(--chapter-enter) * .022) - (var(--chapter-exit) * .018)));
+  opacity:calc(1 - (var(--chapter-exit) * .36));
+  transition:box-shadow .28s ease,border-color .28s ease;
+  will-change:transform,opacity;
+}
+#guide > .page-body.chapter-stack-enhanced .chapter-stage.is-active .chapter-sheet{
+  box-shadow:0 22px 54px rgba(0,0,0,.40),0 3px 18px rgba(0,0,0,.22);
+  border-color:rgba(255,255,255,.18);
+}
+#guide > .page-body.chapter-stack-enhanced .chapter-stage.is-edge-ready-top .chapter-sheet,
+#guide > .page-body.chapter-stack-enhanced .chapter-stage.is-edge-ready-bottom .chapter-sheet{
+  border-color:rgba(235,196,137,.34);
+  box-shadow:0 22px 56px rgba(0,0,0,.42),0 0 0 1px rgba(235,196,137,.16) inset;
+}
+#guide > .page-body.chapter-stack-enhanced .chapter-sheet::before,
+#guide > .page-body.chapter-stack-enhanced .chapter-sheet::after{
+  content:"";
+  position:absolute;
+  left:0;right:0;
+  height:34px;
+  pointer-events:none;
+  opacity:0;
+  transition:opacity .18s ease;
+  z-index:2;
+}
+#guide > .page-body.chapter-stack-enhanced .chapter-sheet::before{
+  top:0;
+  background:linear-gradient(180deg,rgba(8,8,10,.82),rgba(8,8,10,0));
+}
+#guide > .page-body.chapter-stack-enhanced .chapter-sheet::after{
+  bottom:0;
+  background:linear-gradient(180deg,rgba(8,8,10,0),rgba(8,8,10,.88));
+}
+#guide > .page-body.chapter-stack-enhanced .chapter-stage.show-top-fade .chapter-sheet::before{opacity:1;}
+#guide > .page-body.chapter-stack-enhanced .chapter-stage.show-bottom-fade .chapter-sheet::after{opacity:1;}
+#guide > .page-body.chapter-stack-enhanced .chapter-scroll{
+  position:relative;
+  height:100%;
+  overflow-y:auto;
+  -webkit-overflow-scrolling:touch;
+  overscroll-behavior-y:contain;
+  scrollbar-width:none;
+  padding:14px 14px 22px;
+}
+#guide > .page-body.chapter-stack-enhanced .chapter-scroll::-webkit-scrollbar{display:none;}
+#guide > .page-body.chapter-stack-enhanced .chapter-content{
+  min-height:100%;
+  display:flex;
+  flex-direction:column;
+}
+#guide > .page-body.chapter-stack-enhanced .chapter-content > .jump-anchor{
+  height:0;
+  margin:0;
+}
+#guide > .page-body.chapter-stack-enhanced hr.chapter-divider{display:none!important;}
+#guide > .page-body.chapter-stack-enhanced .chapter-eyebrow{
+  margin:0 0 7px!important;
+  transform-origin:left top;
+  transform:translateY(calc((1 - var(--chapter-enter))*18px));
+}
+#guide > .page-body.chapter-stack-enhanced .chapter-eyebrow + h2{
+  transform-origin:left top;
+  transform:scale(calc(1 + ((1 - var(--chapter-settle)) * .07))) translateY(calc((1 - var(--chapter-enter))*10px));
+}
+#guide > .page-body.chapter-stack-enhanced .chapter-lead{
+  transform:translateY(calc((1 - var(--chapter-enter))*12px));
+  opacity:calc(.72 + (var(--chapter-enter) * .28));
+}
+#guide > .page-body.chapter-stack-enhanced .chapter-content > :where(section,details,.food-flip-section,.sights-day-trips,.emergency-contact-grid,.external-action-grid,.airport-access-tabs,.airport-access-panel,.area-directory-section,.venue-directory-section,.experience-grid,.souvenir-grid),
+#guide > .page-body.chapter-stack-enhanced .chapter-content > details,
+#guide > .page-body.chapter-stack-enhanced .chapter-content > div:not(.jump-anchor),
+#guide > .page-body.chapter-stack-enhanced .chapter-content > p,
+#guide > .page-body.chapter-stack-enhanced .chapter-content > h2{
+  transition:transform .01s linear,opacity .01s linear;
+}
+#guide > .page-body.chapter-stack-enhanced .chapter-content > :not(.jump-anchor):not(.chapter-eyebrow):not(h2):not(.chapter-lead){
+  transform:translateY(calc((1 - var(--chapter-enter))*16px));
+  opacity:calc(.86 + (var(--chapter-enter) * .14));
+}
+html[data-theme="light"] #guide > .page-body.chapter-stack-enhanced .chapter-sheet{
+  border-color:rgba(11,22,31,.10);
+  background:linear-gradient(180deg,#FAFBFB 0%,#F3F5F6 100%);
+  box-shadow:0 18px 46px rgba(12,25,39,.12),0 2px 14px rgba(12,25,39,.08);
+}
+html[data-theme="light"] #guide > .page-body.chapter-stack-enhanced .chapter-stage.is-active .chapter-sheet{
+  box-shadow:0 22px 56px rgba(12,25,39,.16),0 4px 18px rgba(12,25,39,.10);
+  border-color:rgba(11,22,31,.12);
+}
+html[data-theme="light"] #guide > .page-body.chapter-stack-enhanced .chapter-stage.is-edge-ready-top .chapter-sheet,
+html[data-theme="light"] #guide > .page-body.chapter-stack-enhanced .chapter-stage.is-edge-ready-bottom .chapter-sheet{
+  border-color:rgba(201,153,77,.40);
+  box-shadow:0 22px 56px rgba(12,25,39,.18),0 0 0 1px rgba(201,153,77,.12) inset;
+}
+html[data-theme="light"] #guide > .page-body.chapter-stack-enhanced .chapter-sheet::before{
+  background:linear-gradient(180deg,rgba(244,246,247,.92),rgba(244,246,247,0));
+}
+html[data-theme="light"] #guide > .page-body.chapter-stack-enhanced .chapter-sheet::after{
+  background:linear-gradient(180deg,rgba(244,246,247,0),rgba(244,246,247,.96));
+}
+@media (prefers-reduced-motion: reduce){
+  #guide > .page-body.chapter-stack-enhanced .chapter-sheet,
+  #guide > .page-body.chapter-stack-enhanced .chapter-eyebrow,
+  #guide > .page-body.chapter-stack-enhanced .chapter-eyebrow + h2,
+  #guide > .page-body.chapter-stack-enhanced .chapter-lead,
+  #guide > .page-body.chapter-stack-enhanced .chapter-content > :not(.jump-anchor){
+    transform:none!important;
+    transition:none!important;
+  }
+}
